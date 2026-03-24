@@ -13,6 +13,9 @@ const API_BASE = 'https://dev.gruponfa.com/webhook'
 const REASONS_PAGE_SIZE = 10
 const CATEGORIES_CACHE_PREFIX = 'categorize-care-categories-'
 const REQUIRED_REASONS = ['Agendou', 'Não agendou']
+const API_URL = window.location.ancestorOrigins?.[0]
+  ? window.location.ancestorOrigins[0].replace('app', 'api')
+  : 'https://api.inovstar.com'
 
 // Busca categorias/categorias: GET com systemId na query (navegadores não enviam body em GET)
 // Response: [{ _id, systemId, category }, ...]
@@ -365,6 +368,7 @@ function App() {
       const body = {
         systemId: systemKey,
         attendanceId,
+        apiUrl: API_URL,
         category,
         observation,
         sendCloseMessage,
