@@ -94,6 +94,137 @@
   font-weight: 500;
 }
 
+.helperText {
+  margin: 0 0 14px;
+  font-size: 0.9rem;
+  color: #7f8c8d;
+}
+.helperError {
+  color: #c0392b;
+}
+
+.spinner {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  border: 4px solid #e6eaee;
+  border-top-color: #2c3e50;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.detailsCard {
+  border: 1px solid #eee;
+  border-radius: 12px;
+  padding: 14px 14px;
+  background: #fff;
+  margin: 0 0 12px;
+}
+
+.detailsTitle {
+  margin: 0 0 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.detailsLine {
+  margin: 0 0 6px;
+  font-size: 0.92rem;
+  color: #333;
+}
+.detailsLine:last-child { margin-bottom: 0; }
+
+.profileCard {
+  border: 1px solid #eee;
+  border-radius: 12px;
+  padding: 14px;
+  background: #fff;
+  margin: 0 0 12px;
+}
+
+.profileRow {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.avatarWrap {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: #f2f4f7;
+  border: 1px solid #e8eaee;
+}
+
+.avatarImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.avatarFallback {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #dfe6e9, #b2bec3);
+}
+
+.profileInfo { min-width: 0; }
+
+.profileName {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #2c3e50;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profileSub {
+  margin: 4px 0 0;
+  font-size: 0.9rem;
+  color: #7f8c8d;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kvGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 10px;
+}
+
+.kvItem { min-width: 0; }
+
+.kvLabel {
+  display: block;
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: #95a5a6;
+  margin-bottom: 4px;
+}
+
+.kvValue {
+  display: block;
+  font-size: 0.93rem;
+  color: #2c3e50;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .field {
   margin-bottom: 18px;
 }
@@ -200,16 +331,16 @@
 .screenOverlay {
   position: fixed;
   top: 0;
+  bottom: 0;
   left: 50%;
   transform: translateX(-50%);
   width: 350px;
   max-width: 100%;
-  height: 850px;
   background: #fff;
   z-index: 100;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 0 24px rgba(0,0,0,0.12);
+  box-shadow: 0 0 24px rgba(0,0,0,0.06);
 }
 
 .manageContent {

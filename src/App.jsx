@@ -1,85 +1,18 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import './App.css'
-import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined'
-import ArrowBackIosNewIcon from '@mui/icons-material/ArrowBackIosNew'
-import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
-import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
-import CloseIcon from '@mui/icons-material/Close'
-import CheckIcon from '@mui/icons-material/Check'
-import LockOutlinedIcon from '@mui/icons-material/LockOutlined'
 
 const API_BASE = 'https://dev.gruponfa.com/webhook'
-const REASONS_PAGE_SIZE = 10
-const CATEGORIES_CACHE_PREFIX = 'categorize-care-categories-'
-const REQUIRED_REASONS = ['Agendou', 'Não agendou']
-const API_URL = window.location.ancestorOrigins?.[0]
-  ? window.location.ancestorOrigins[0].replace('app', 'api')
-  : 'https://api.inovstar.com'
+const FIXED_CATEGORIES = ['Novo', 'Em atendimento', 'Convertido', 'Perdido']
 
-// Busca categorias/categorias: GET com systemId na query (navegadores não enviam body em GET)
-// Response: [{ _id, systemId, category }, ...]
-async function searchCategories(systemId) {
-  const id = systemId ? String(systemId).trim() : ''
-  const url = `${API_BASE}/search/categorize-attendance?systemId=${encodeURIComponent(id)}`
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
-  })
-  if (!res.ok) throw new Error('Falha na busca')
-  const data = await res.json()
-  return Array.isArray(data) ? data : []
-}
-
-function normalizeReasonName(value) {
-  return String(value ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim()
-    .toLowerCase()
-}
-
-function isRequiredReasonName(name) {
-  const n = normalizeReasonName(name)
-  return REQUIRED_REASONS.some((r) => normalizeReasonName(r) === n)
-}
-
-async function createCategory(systemId, category) {
-  const res = await fetch(`${API_BASE}/create/cetegorize-attendance`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ systemId, category }),
-  })
-  if (!res.ok) throw new Error(res.statusText || 'Falha ao salvar')
-  return res
-}
-
-async function ensureRequiredReasons(systemId, existingList) {
-  const systemKey = systemId ? String(systemId).trim() : ''
-  if (!systemKey) return Array.isArray(existingList) ? existingList : []
-
-  const list = Array.isArray(existingList) ? existingList : await searchCategories(systemKey)
-  const existingNames = new Set(
-    list.map((item) => normalizeReasonName(typeof item === 'object' ? item?.category : item))
-  )
-
-  const missing = REQUIRED_REASONS.filter((r) => !existingNames.has(normalizeReasonName(r)))
-  if (missing.length === 0) return list
-
-  // cria os que faltam e recarrega para garantir ids retornados pela API
-  for (const reason of missing) {
-    try {
-      await createCategory(systemKey, reason)
-    } catch {
-      // se falhar aqui, ainda tentamos seguir com o que houver no backend
-    }
+/** Alertas conforme WlExtension (Chatlabel): https://github.com/chatlabel/extension-php */
+function extensionAlert(message, variant = 'warning') {
+  const Wl = typeof window !== 'undefined' ? window.WlExtension : undefined
+  if (Wl && typeof Wl.alert === 'function') {
+    Wl.alert({ message, variant })
+    return
   }
-
-  try {
-    return await searchCategories(systemKey)
-  } catch {
-    return list
-  }
+  window.alert(message)
 }
 
 function App() {
@@ -87,111 +20,18 @@ function App() {
   const [attendanceId, setAttendanceId] = useState(null)
   const [attendanceData, setAttendanceData] = useState(null) // payload completo do onOpenAttendance
   const [hasOpenAttendance, setHasOpenAttendance] = useState(false)
-  const [categories, setCategories] = useState([])
-  const [categoriesLoading, setCategoriesLoading] = useState(false)
-  const [isManageScreenVisible, setIsManageScreenVisible] = useState(false)
-  const [reasonsList, setReasonsList] = useState([])
-  const [reasonsPage, setReasonsPage] = useState(1)
-  const [reasonsLoading, setReasonsLoading] = useState(false)
-  const [newReasonFormVisible, setNewReasonFormVisible] = useState(false)
-  const [newReasonInput, setNewReasonInput] = useState('')
-  const [saveReasonLoading, setSaveReasonLoading] = useState(false)
-  const [editingReasonId, setEditingReasonId] = useState(null)
-  const [editingReasonName, setEditingReasonName] = useState('')
-  const [deletingReasonId, setDeletingReasonId] = useState(null)
-  const [resultadoAtendimento, setResultadoAtendimento] = useState('')
-  const [observacao, setObservacao] = useState('')
-  const [sendCloseMessage, setSendCloseMessage] = useState(true)
-  const [sendSatisfactionSurvey, setSendSatisfactionSurvey] = useState(false)
-  const [submitLoading, setSubmitLoading] = useState(false)
+
+  const [leadLoading, setLeadLoading] = useState(false)
+  const [leadError, setLeadError] = useState('')
+  const [leadData, setLeadData] = useState(null)
+  const [noCampaignData, setNoCampaignData] = useState(false)
+
+  const [statusAtendimento, setStatusAtendimento] = useState('')
+  const [initialStatusAtendimento, setInitialStatusAtendimento] = useState('')
+  const [saveLoading, setSaveLoading] = useState(false)
 
   const stateRef = useRef({ setAttendanceId, setAttendanceData, setHasOpenAttendance })
   stateRef.current = { setAttendanceId, setAttendanceData, setHasOpenAttendance }
-
-  const fetchCategories = useCallback(async () => {
-    if (!systemKey) return []
-    const list = await searchCategories(systemKey)
-    return ensureRequiredReasons(systemKey, list)
-  }, [systemKey])
-
-  const loadCategoriesForForm = useCallback(async () => {
-    if (!systemKey) return
-    // Se já temos categorias em memória, ainda garantimos os obrigatórios (podem ter sido removidos no backend)
-    if (categories.length > 0) {
-      const ensured = await ensureRequiredReasons(systemKey, categories)
-      if (ensured !== categories) {
-        setCategories(ensured)
-        try {
-          const cacheKey = `${CATEGORIES_CACHE_PREFIX}${systemKey}`
-          window.localStorage.setItem(cacheKey, JSON.stringify(ensured))
-        } catch {
-          // ignora erro de cache
-        }
-      }
-      return
-    }
-
-    setCategoriesLoading(true)
-    try {
-      const cacheKey = `${CATEGORIES_CACHE_PREFIX}${systemKey}`
-
-      // Tenta carregar do localStorage primeiro
-      const cached = window.localStorage.getItem(cacheKey)
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached)
-          if (Array.isArray(parsed)) {
-            const ensured = await ensureRequiredReasons(systemKey, parsed)
-            setCategories(ensured)
-            try {
-              window.localStorage.setItem(cacheKey, JSON.stringify(ensured))
-            } catch {
-              // ignora erro de cache
-            }
-            return
-          }
-        } catch {
-          // cache inválido, ignora e segue para busca
-        }
-      }
-
-      // Sem cache válido: busca na API, atualiza estado e grava em cache
-      const list = await ensureRequiredReasons(systemKey)
-      setCategories(list)
-      try {
-        window.localStorage.setItem(cacheKey, JSON.stringify(list))
-      } catch {
-        // se não conseguir gravar em cache, apenas segue
-      }
-    } catch {
-      setCategories([])
-    } finally {
-      setCategoriesLoading(false)
-    }
-  }, [systemKey, categories.length])
-
-  const loadReasonsList = useCallback(async () => {
-    if (!systemKey) return
-    setReasonsLoading(true)
-    try {
-      const list = await ensureRequiredReasons(systemKey)
-      setReasonsList(list)
-      setReasonsPage(1)
-
-      // Atualiza também as categorias e o cache, para refletir novas categorias
-      setCategories(list)
-      try {
-        const cacheKey = `${CATEGORIES_CACHE_PREFIX}${systemKey}`
-        window.localStorage.setItem(cacheKey, JSON.stringify(list))
-      } catch {
-        // erro ao gravar cache pode ser ignorado
-      }
-    } catch {
-      setReasonsList([])
-    } finally {
-      setReasonsLoading(false)
-    }
-  }, [systemKey])
 
   // Conforme doc https://github.com/chatlabel/extension-php: getInfoUser retorna userId e systemId
   // Registra eventos onOpenAttendance e onCloseAttendance para o parent (Chatlabel) invocar
@@ -247,147 +87,120 @@ function App() {
     return () => { cancelled = true }
   }, [])
 
+  const chatCodigo =
+    (attendanceData && (attendanceData.atendimentoId ?? attendanceData.attendanceId ?? attendanceData.id)) ||
+    (attendanceData && attendanceData.chat && (attendanceData.chat.codigo || attendanceData.chat.id)) ||
+    (attendanceData && (attendanceData.chatCodigo ?? attendanceData.chatId)) ||
+    attendanceId ||
+    null
+
+  const openedAttendanceKey = String(chatCodigo || '')
+
   useEffect(() => {
-    if (hasOpenAttendance) loadCategoriesForForm()
-  }, [hasOpenAttendance, loadCategoriesForForm])
-
-  const showManageReasons = () => {
-    setIsManageScreenVisible(true)
-    setNewReasonFormVisible(false)
-    setNewReasonInput('')
-    loadReasonsList()
-  }
-
-  const hideManageReasons = () => setIsManageScreenVisible(false)
-
-  const saveNewReason = async () => {
-    const name = newReasonInput.trim()
-    if (!name || !systemKey) return
-    if (isRequiredReasonName(name)) {
-      alert('Esta categoria é obrigatória e já deve existir no sistema.')
+    if (!hasOpenAttendance) {
+      setLeadLoading(false)
+      setLeadError('')
+      setLeadData(null)
+      setNoCampaignData(false)
+      setStatusAtendimento('')
+      setInitialStatusAtendimento('')
       return
     }
-    setSaveReasonLoading(true)
-    try {
-      await createCategory(systemKey, name)
-      setNewReasonInput('')
-      setNewReasonFormVisible(false)
-      await loadReasonsList()
-      if (hasOpenAttendance) await loadCategoriesForForm()
-    } catch (err) {
-      alert('Erro ao cadastrar categoria: ' + (err.message || 'Tente novamente.'))
-    } finally {
-      setSaveReasonLoading(false)
-    }
-  }
 
-  const startEditReason = (item) => {
-    if (!item?._id) return
-    if (isRequiredReasonName(item.category)) return
-    setDeletingReasonId(null)
-    setEditingReasonId(item._id)
-    setEditingReasonName(item.category || '')
-  }
+    if (!systemKey || !openedAttendanceKey) return
 
-  const cancelEditReason = () => {
-    setEditingReasonId(null)
-    setEditingReasonName('')
-  }
+    let cancelled = false
+    setLeadLoading(true)
+    setLeadError('')
+    setLeadData(null)
+    setNoCampaignData(false)
+    setInitialStatusAtendimento('')
 
-  const editReason = async (item) => {
-    if (!item?._id) return
-    if (isRequiredReasonName(item.category)) return
-    const name = editingReasonName.trim()
-    if (!name) return
-    if (isRequiredReasonName(name)) {
-      alert('Esta categoria é obrigatória e não pode ser usada como edição.')
-      return
-    }
-    try {
-      const res = await fetch(`${API_BASE}/edit/category/categorize-attendance`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...item,
-          systemId: systemKey,
-          category: name,
-        }),
+    fetch(`${API_BASE}/extension/search-source-lead`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        'chat.codigo': openedAttendanceKey,
+        systemKey: String(systemKey),
+      }),
+    })
+      .then(async (res) => {
+        let data = null
+        try {
+          data = await res.json()
+        } catch {
+          data = null
+        }
+        if (!res.ok) {
+          const msg = (data && data.message) || res.statusText || 'Falha ao buscar dados do atendimento'
+          throw new Error(msg)
+        }
+        return data
       })
-      if (!res.ok) throw new Error('Falha ao atualizar')
-      await loadReasonsList()
-      if (hasOpenAttendance) await loadCategoriesForForm()
-      cancelEditReason()
-    } catch {
-      alert('Erro ao editar categoria. Verifique se a API de atualização está disponível.')
-    }
-  }
+      .then((data) => {
+        if (cancelled) return
+        const normalized =
+          Array.isArray(data) ? (data[0] && typeof data[0] === 'object' ? data[0] : null)
+          : (data && typeof data === 'object' ? data : null)
 
-  const startDeleteReason = (item) => {
-    if (!item?._id) return
-    if (isRequiredReasonName(item.category)) return
-    setEditingReasonId(null)
-    setEditingReasonName('')
-    setDeletingReasonId(item._id)
-  }
+        const hasLead = !!(normalized && normalized._id)
 
-  const cancelDeleteReason = () => {
-    setDeletingReasonId(null)
-  }
+        if (!hasLead) {
+          setLeadData(null)
+          setNoCampaignData(true)
+          setStatusAtendimento('')
+          setInitialStatusAtendimento('')
+          return
+        }
 
-  const deleteReason = async (item) => {
-    if (!item?._id) return
-    if (isRequiredReasonName(item.category)) return
-    try {
-      const res = await fetch(`${API_BASE}/delete/category/categorize-attendance`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...item,
-          systemId: systemKey,
-        }),
+        setLeadData(normalized)
+        const loadedStatus = normalized?.status?.atendimento ? String(normalized.status.atendimento) : ''
+        setInitialStatusAtendimento(loadedStatus)
+        setStatusAtendimento(loadedStatus)
       })
-      if (!res.ok) throw new Error('Falha ao excluir')
-      await loadReasonsList()
-      if (hasOpenAttendance) await loadCategoriesForForm()
-      cancelDeleteReason()
-    } catch {
-      alert('Erro ao excluir. Verifique se a API de exclusão está disponível.')
-    }
-  }
+      .catch((err) => {
+        if (cancelled) return
+        setLeadError(err?.message ? String(err.message) : 'Falha ao buscar dados do atendimento')
+      })
+      .finally(() => {
+        if (!cancelled) setLeadLoading(false)
+      })
 
-  const submitAttendance = async () => {
-    const category = resultadoAtendimento.trim() || 'Não especificado'
-    const observation = observacao.trim()
-    if (!systemKey || !attendanceId) {
-      alert('Atendimento ou sistema não identificado.')
+    return () => { cancelled = true }
+  }, [hasOpenAttendance, systemKey, openedAttendanceKey])
+
+  const saveChanges = async () => {
+    const status = statusAtendimento.trim()
+    const nextStatus = status || 'Não especificado'
+
+    const leadId = leadData?._id ? String(leadData._id) : ''
+    const chatCode = leadData?.chat?.codigo ? String(leadData.chat.codigo) : openedAttendanceKey
+
+    if (!systemKey) {
+      extensionAlert('Sistema não identificado.', 'warning')
       return
     }
-    setSubmitLoading(true)
+
+    if (!leadId || !chatCode) {
+      extensionAlert('Dados insuficientes para salvar (aguarde carregar o atendimento).', 'warning')
+      return
+    }
+
+    setSaveLoading(true)
     try {
-      const a = attendanceData || {}
       const body = {
-        systemId: systemKey,
-        attendanceId,
-        apiUrl: API_URL,
-        category,
-        observation,
-        sendCloseMessage,
-        sendSatisfactionSurvey,
-        setorId: a.setorId ?? a.setor?.id ?? null,
-        setorNome: a.setor?.nome ?? null,
-        usuarioId: a.usuarioId ?? a.usuario?.id ?? null,
-        usuarioNome: a.usuario?.nome ?? a.usuario?.apelido ?? null,
-        contatoId: a.contato?.id ?? null,
-        contatoNome: a.contato?.nome ?? null,
-        contatoNumero: a.contato?.numero ?? null,
-        canalId: a.canalId ?? a.canal?.id ?? null,
-        canalNome: a.canal?.descricao ?? null,
+        _id: leadId,
+        systemKey: String(systemKey),
+        'chat.codigo': chatCode,
+        status: nextStatus,
       }
-      const res = await fetch(`${API_BASE}/add-attendance/categorize-attendance`, {
+
+      const res = await fetch(`${API_BASE}/extension/update-category-lead-source`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
+
       let data = null
       try {
         data = await res.json()
@@ -396,293 +209,161 @@ function App() {
       }
 
       if (!res.ok) {
-        const msg =
-          (Array.isArray(data) && data[0]?.msg) ||
-          res.statusText ||
-          'Falha ao finalizar'
+        const msg = (data && data.message) || res.statusText || 'Falha ao salvar'
         throw new Error(msg)
       }
 
-      // API de finalização retorna: [{ status: \"200\", msg: \"Chat finalized successfully!\" }]
-      const okStatus =
-        !data || !Array.isArray(data) || data[0]?.status === '200'
-      if (!okStatus) {
-        const msg =
-          (Array.isArray(data) && data[0]?.msg) ||
-          'Falha ao finalizar'
-        throw new Error(msg)
-      }
-
-      setObservacao('')
-      setHasOpenAttendance(false)
-      setAttendanceId(null)
-      setAttendanceData(null)
-      if (typeof window.WlExtension !== 'undefined' && window.WlExtension.alert) {
-        window.WlExtension.alert({ message: 'Atendimento finalizado com sucesso.', variant: 'success' })
-      } else {
-        alert('Atendimento finalizado com sucesso.')
-      }
+      extensionAlert('Alterações salvas.', 'success')
     } catch (err) {
-      alert('Erro ao finalizar: ' + (err.message || 'Tente novamente.'))
+      extensionAlert('Erro ao salvar: ' + (err?.message || 'Tente novamente.'), 'error')
     } finally {
-      setSubmitLoading(false)
+      setSaveLoading(false)
     }
   }
 
-  const totalPages = Math.max(1, Math.ceil(reasonsList.length / REASONS_PAGE_SIZE))
-  const pageItems = reasonsList.slice(
-    (reasonsPage - 1) * REASONS_PAGE_SIZE,
-    reasonsPage * REASONS_PAGE_SIZE
-  )
+  const dropdownOptions = [
+    { value: '', label: 'Selecione o status' },
+    ...FIXED_CATEGORIES.map((c) => ({ value: c, label: c })),
+  ]
 
-  const dropdownOptions = categoriesLoading
-    ? [{ value: '', label: 'Carregando...' }]
-    : categories.length === 0
-      ? [{ value: '', label: 'Não especificado' }]
-      : [
-          { value: '', label: 'Selecione a categoria' },
-          ...categories.map((c) => ({
-            value: typeof c === 'object' ? (c.category || c._id) : c,
-            label: typeof c === 'object' ? (c.category || c._id) : c,
-          })),
-        ]
+  const photoUrl =
+    (attendanceData && (attendanceData.linkImagem || attendanceData.contato?.linkImagem)) ||
+    ''
+
+  const displayName =
+    leadData?.contato?.nome ||
+    attendanceData?.descricao ||
+    attendanceData?.contato?.nome ||
+    '-'
+
+  const displayNumber =
+    leadData?.contato?.numero ||
+    attendanceData?.contato?.numero ||
+    '-'
+
+  const displayCompany =
+    leadData?.empresa?.nome ||
+    attendanceData?.organizacao?.nome ||
+    '-'
+
+  const displayChannel =
+    leadData?.canal?.nome ||
+    attendanceData?.canal?.descricao ||
+    '-'
+
+  const displayCampaignOrigin = leadData?.campanha?.origemLead || '-'
+  const displayCampaignMessage = leadData?.campanha?.campanhaMessage || '-'
+
+  const canSave =
+    !saveLoading &&
+    statusAtendimento.trim() !== '' &&
+    statusAtendimento.trim() !== initialStatusAtendimento.trim()
 
   return (
     <div className="app">
       {!hasOpenAttendance && (
         <main className="main">
-          <button type="button" className="btnManage" onClick={showManageReasons}>
-            <span className="btnIcon" aria-hidden="true">
-              <SettingsOutlinedIcon fontSize="small" />
-            </span>
-            Gerenciar Categorias
-          </button>
           <div className="emptyState">
             <div className="emptyIcon" aria-hidden="true">
               <HomeOutlinedIcon fontSize="inherit" />
             </div>
             <p className="emptyTitle">Nenhum atendimento aberto</p>
-            <p className="emptySubtitle">Por favor, selecione ou abra um atendimento para finalizar.</p>
+            <p className="emptySubtitle">Abra um atendimento para visualizar os dados e ajustar status/categoria.</p>
           </div>
         </main>
       )}
 
       {hasOpenAttendance && (
         <main className="main">
-          <p className="formIntro">Tem certeza que deseja encerrar esse atendimento?</p>
-
-          <div className="field">
-            <label htmlFor="resultadoAtendimento">Resultado do atendimento</label>
-            <select
-              id="resultadoAtendimento"
-              className="select"
-              value={resultadoAtendimento}
-              onChange={(e) => setResultadoAtendimento(e.target.value)}
-            >
-              {dropdownOptions.map((opt) => (
-                <option key={opt.value || 'empty'} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="field">
-            <label htmlFor="observacao">Observação</label>
-            <textarea
-              id="observacao"
-              className="textarea"
-              rows={4}
-              placeholder="Texto livre..."
-              value={observacao}
-              onChange={(e) => setObservacao(e.target.value)}
-            />
-          </div>
-
-          <div className="switches">
-            <label className="switchRow">
-              <span className="switchLabel">Enviar mensagem de encerramento</span>
-              <div className="switchWrap">
-                <input
-                  type="checkbox"
-                  className="switchInput"
-                  checked={sendCloseMessage}
-                  onChange={(e) => setSendCloseMessage(e.target.checked)}
-                />
-                <span className="switchSlider" />
+          {leadLoading ? (
+            <div className="emptyState">
+              <div className="spinner" aria-hidden="true" />
+              <p className="emptyTitle">Verificando campanha…</p>
+              <p className="emptySubtitle">Aguarde enquanto buscamos os dados do atendimento.</p>
+            </div>
+          ) : !!leadError ? (
+            <div className="emptyState">
+              <div className="emptyIcon" aria-hidden="true">
+                <HomeOutlinedIcon fontSize="inherit" />
               </div>
-            </label>
-            <label className="switchRow">
-              <span className="switchLabel">Enviar pesquisa de satisfação</span>
-              <div className="switchWrap">
-                <input
-                  type="checkbox"
-                  className="switchInput"
-                  checked={sendSatisfactionSurvey}
-                  onChange={(e) => setSendSatisfactionSurvey(e.target.checked)}
-                />
-                <span className="switchSlider" />
+              <p className="emptyTitle">Não foi possível carregar</p>
+              <p className="emptySubtitle">{leadError}</p>
+            </div>
+          ) : noCampaignData ? (
+            <div className="emptyState">
+              <div className="emptyIcon" aria-hidden="true">
+                <HomeOutlinedIcon fontSize="inherit" />
               </div>
-            </label>
-          </div>
-
-          <button
-            type="button"
-            className="btnSubmit"
-            onClick={submitAttendance}
-            disabled={submitLoading}
-          >
-            Gravar dados e finalizar atendimento
-          </button>
-        </main>
-      )}
-
-      {isManageScreenVisible && (
-        <div className="screenOverlay">
-          <div className="manageTopBar">
-            <button type="button" className="btnBack" onClick={hideManageReasons}>
-              <span className="btnIcon" aria-hidden="true">
-                <ArrowBackIosNewIcon fontSize="inherit" />
-              </span>
-              Voltar para tela inicial
-            </button>
-          </div>
-          <div className="manageContent">
-            <section className="manageSection">
-              <h2 className="manageSectionTitle">Cadastrar Nova Categoria</h2>
-              <button type="button" className="btnNewReason" onClick={() => setNewReasonFormVisible((v) => !v)}>
-                + Nova Categoria
-              </button>
-              {newReasonFormVisible && (
-                <div className="inlineForm">
-                  <input
-                    type="text"
-                    className="input"
-                    placeholder="Digite o nome da categoria"
-                    value={newReasonInput}
-                    onChange={(e) => setNewReasonInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && saveNewReason()}
-                    maxLength={200}
-                  />
-                  <button
-                    type="button"
-                    className="btnSaveReason"
-                    onClick={saveNewReason}
-                    disabled={saveReasonLoading || !newReasonInput.trim()}
-                  >
-                    Salvar
-                  </button>
+              <p className="emptyTitle">Atendimento sem campanha</p>
+              <p className="emptySubtitle">Este atendimento não foi aberto a partir de uma campanha.</p>
+            </div>
+          ) : (
+            <>
+              <section className="profileCard">
+                <div className="profileRow">
+                  <div className="avatarWrap" aria-hidden="true">
+                    {photoUrl ? (
+                      <img className="avatarImg" src={photoUrl} alt="" />
+                    ) : (
+                      <div className="avatarFallback" />
+                    )}
+                  </div>
+                  <div className="profileInfo">
+                    <p className="profileName">{displayName}</p>
+                    <p className="profileSub">{displayNumber}</p>
+                  </div>
                 </div>
-              )}
-            </section>
-            <section className="manageSection">
-              <h2 className="manageSectionTitle">Categorias cadastradas</h2>
-              {!systemKey && (
-                <div className="loadingInline">Conecte ao sistema para listar as categorias.</div>
-              )}
-              {systemKey && reasonsLoading && (
-                <div className="loadingInline">Carregando...</div>
-              )}
-              {systemKey && !reasonsLoading && (
-                <>
-                  <ul className="reasonsList">
-                    {pageItems.map((item) => (
-                      <li key={item._id} className="reasonItem">
-                        <span className="reasonName">
-                          {editingReasonId === item._id ? (
-                            <input
-                              type="text"
-                              className="input"
-                              value={editingReasonName}
-                              onChange={(e) => setEditingReasonName(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') editReason(item)
-                                if (e.key === 'Escape') cancelEditReason()
-                              }}
-                            />
-                          ) : (
-                            item.category || item._id || ''
-                          )}
-                        </span>
-                        <div className="reasonActions">
-                          {isRequiredReasonName(item.category) && (
-                            <span className="reasonLock" title="Categoria obrigatória (não pode editar/excluir)">
-                              <LockOutlinedIcon fontSize="inherit" />
-                            </span>
-                          )}
-                          {(editingReasonId === item._id || deletingReasonId === item._id) ? (
-                            <>
-                              <button
-                                type="button"
-                                className="btnCancel"
-                                onClick={() =>
-                                  editingReasonId === item._id
-                                    ? cancelEditReason()
-                                    : cancelDeleteReason()
-                                }
-                                aria-label="Cancelar"
-                              >
-                                <CloseIcon fontSize="inherit" />
-                              </button>
-                              <button
-                                type="button"
-                                className="btnConfirm"
-                                onClick={() =>
-                                  editingReasonId === item._id
-                                    ? editReason(item)
-                                    : deleteReason(item)
-                                }
-                                aria-label="Confirmar"
-                              >
-                                <CheckIcon fontSize="inherit" />
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => startEditReason(item)}
-                                aria-label="Editar"
-                                disabled={isRequiredReasonName(item.category)}
-                                title={isRequiredReasonName(item.category) ? 'Categoria obrigatória' : 'Editar'}
-                              >
-                                <EditOutlinedIcon fontSize="inherit" />
-                              </button>
-                              <button
-                                type="button"
-                                className="btnDelete"
-                                onClick={() => startDeleteReason(item)}
-                                aria-label="Excluir"
-                                disabled={isRequiredReasonName(item.category)}
-                                title={isRequiredReasonName(item.category) ? 'Categoria obrigatória' : 'Excluir'}
-                              >
-                                <DeleteOutlineIcon fontSize="inherit" />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                  {totalPages > 1 && (
-                    <div className="pagination">
-                      {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-                        <button
-                          key={p}
-                          type="button"
-                          className={p === reasonsPage ? 'active' : ''}
-                          onClick={() => setReasonsPage(p)}
-                        >
-                          {p}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </section>
-          </div>
-        </div>
+              </section>
+
+              <section className="detailsCard">
+                <p className="detailsTitle">Atendimento</p>
+                <div className="kvGrid">
+                  <div className="kvItem">
+                    <span className="kvLabel">Empresa</span>
+                    <span className="kvValue">{displayCompany}</span>
+                  </div>
+                  <div className="kvItem">
+                    <span className="kvLabel">Canal</span>
+                    <span className="kvValue">{displayChannel}</span>
+                  </div>
+                  <div className="kvItem">
+                    <span className="kvLabel">Campanha</span>
+                    <span className="kvValue">{displayCampaignMessage}</span>
+                  </div>
+                  <div className="kvItem">
+                    <span className="kvLabel">Origem</span>
+                    <span className="kvValue">{displayCampaignOrigin}</span>
+                  </div>
+                </div>
+              </section>
+
+              <section className="detailsCard">
+                <p className="detailsTitle">Status do atendimento</p>
+                <select
+                  id="statusAtendimento"
+                  className="select"
+                  value={statusAtendimento}
+                  onChange={(e) => setStatusAtendimento(e.target.value)}
+                >
+                  {dropdownOptions.map((opt) => (
+                    <option key={opt.value || 'empty'} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </section>
+
+              <button
+                type="button"
+                className="btnSubmit"
+                onClick={saveChanges}
+                disabled={!canSave}
+              >
+                {saveLoading ? 'Salvando…' : 'Salvar alterações'}
+              </button>
+            </>
+          )}
+        </main>
       )}
     </div>
   )
