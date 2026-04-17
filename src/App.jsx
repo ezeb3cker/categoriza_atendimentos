@@ -3,7 +3,7 @@ import './App.css'
 import HomeOutlinedIcon from '@mui/icons-material/HomeOutlined'
 
 const API_BASE = 'https://dev.gruponfa.com/webhook'
-const FIXED_CATEGORIES = ['Novo', 'Em atendimento', 'Convertido', 'Perdido']
+const FIXED_CATEGORIES = ['Aguardando atendimento', 'Em atendimento', 'Convertido', 'Perdido']
 
 /** Alertas conforme WlExtension (Chatlabel): https://github.com/chatlabel/extension-php */
 function extensionAlert(message, variant = 'warning') {
